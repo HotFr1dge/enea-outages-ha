@@ -14,7 +14,7 @@ if ! git diff-index --quiet HEAD --; then
 fi
 
 # Define the manifest file path
-MANIFEST_FILE="custom_components/multisport/manifest.json"
+MANIFEST_FILE="custom_components/enea_outages/manifest.json"
 
 # Get current version from manifest.json
 current_version=$(grep '"version":' $MANIFEST_FILE | cut -d '"' -f 4)
