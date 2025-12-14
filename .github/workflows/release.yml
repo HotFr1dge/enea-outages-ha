@@ -22,13 +22,13 @@ jobs:
 
       - name: Create component zip
         run: |
-          cd custom_components/multisport
-          zip -r ../../multisport.zip .
+          cd custom_components/enea_outages
+          zip -r ../../enea_outages.zip .
           cd ../..
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: multisport.zip
+          files: enea_outages.zip
           tag_name: ${{ env.VERSION }}
           generate_release_notes: true

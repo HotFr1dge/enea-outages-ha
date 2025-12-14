@@ -1,11 +1,15 @@
 {
   "domain": "enea_outages",
   "name": "Enea Outages",
+  "codeowners": [
+    "@TheUndefined"
+  ],
   "config_flow": true,
   "documentation": "https://github.com/TheUndefined/enea-outages-ha",
+  "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/TheUndefined/enea-outages-ha/issues",
-  "requirements": ["enea-outages==0.3.1"],
-  "codeowners": ["@TheUndefined"],
-  "version": "0.1.0",
-  "iot_class": "cloud_polling"
+  "requirements": [
+    "enea-outages==0.3.1"
+  ],
+  "version": "0.1.2"
 }
