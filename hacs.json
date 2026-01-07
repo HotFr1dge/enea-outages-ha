@@ -1,4 +1,7 @@
 {
   "name": "Enea Outages",
-  "render_readme": true
+  "render_readme": true,
+  "country": ["PL"],
+  "zip_release": true,
+  "filename": "enea_outages.zip"
 }
