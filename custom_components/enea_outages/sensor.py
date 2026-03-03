@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from enea_outages.client import EneaOutagesClient
 from enea_outages.models import Outage, OutageType
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
@@ -16,8 +17,9 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     DOMAIN,
-    CONF_REGION,
-    CONF_STREET,
+    CONF_BRANCH,
+    CONF_DISTRIBUTION_AREA,
+    CONF_QUERY,
     ATTR_DESCRIPTION,
     ATTR_START_TIME,
     ATTR_END_TIME,
@@ -32,20 +34,15 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the sensor platform."""
+    query = config_entry.data.get(CONF_QUERY, "")
 
-    street = config_entry.data.get(CONF_STREET)
-
-    # Get the dictionary of coordinators for this entry
     entry_coordinators = hass.data[DOMAIN][config_entry.entry_id]
     planned_coordinator = entry_coordinators[OutageType.PLANNED]
     unplanned_coordinator = entry_coordinators[OutageType.UNPLANNED]
 
-    entities = []
-
-    # Planned Outages Count Sensor
-    entities.append(
+    entities = [
         EneaOutagesCountSensor(
-            planned_coordinator,  # Pass the specific coordinator
+            planned_coordinator,
             config_entry,
             OutageType.PLANNED,
             SensorEntityDescription(
@@ -53,14 +50,10 @@ async def async_setup_entry(
                 translation_key="planned_outages_count",
                 icon="mdi:power-off",
             ),
-            street,
-        )
-    )
-
-    # Unplanned Outages Count Sensor
-    entities.append(
+            query,
+        ),
         EneaOutagesCountSensor(
-            unplanned_coordinator,  # Pass the specific coordinator
+            unplanned_coordinator,
             config_entry,
             OutageType.UNPLANNED,
             SensorEntityDescription(
@@ -68,14 +61,10 @@ async def async_setup_entry(
                 translation_key="unplanned_outages_count",
                 icon="mdi:power-off",
             ),
-            street,
-        )
-    )
-
-    # Planned Outages Summary Sensor
-    entities.append(
+            query,
+        ),
         EneaOutagesSummarySensor(
-            planned_coordinator,  # Pass the specific coordinator
+            planned_coordinator,
             config_entry,
             OutageType.PLANNED,
             SensorEntityDescription(
@@ -83,14 +72,10 @@ async def async_setup_entry(
                 translation_key="planned_outages_summary",
                 icon="mdi:calendar-clock",
             ),
-            street,
-        )
-    )
-
-    # Unplanned Outages Summary Sensor
-    entities.append(
+            query,
+        ),
         EneaOutagesSummarySensor(
-            unplanned_coordinator,  # Pass the specific coordinator
+            unplanned_coordinator,
             config_entry,
             OutageType.UNPLANNED,
             SensorEntityDescription(
@@ -98,9 +83,9 @@ async def async_setup_entry(
                 translation_key="unplanned_outages_summary",
                 icon="mdi:alert-outline",
             ),
-            street,
-        )
-    )
+            query,
+        ),
+    ]
 
     async_add_entities(entities)
 
@@ -112,38 +97,48 @@ class EneaOutagesBaseSensor(CoordinatorEntity, SensorEntity):
 
     def __init__(
         self,
-        coordinator_for_outage_type,  # This will now be a single coordinator
+        coordinator,
         config_entry: ConfigEntry,
         outage_type: OutageType,
         entity_description: SensorEntityDescription,
-        street: str | None,
+        query: str,
     ) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator_for_outage_type)  # Pass the coordinator here
+        super().__init__(coordinator)
         self.entity_description = entity_description
         self._config_entry = config_entry
         self._outage_type = outage_type
-        self._street = street
-        self._region = config_entry.data[CONF_REGION]
+        self._query = query
+        self._branch = config_entry.data[CONF_BRANCH]
+        self._distribution_area = config_entry.data.get(CONF_DISTRIBUTION_AREA, "")
 
         self._attr_unique_id = f"{config_entry.entry_id}_{entity_description.key}"
 
-        device_name = f"Enea Outages ({self._region}{' - ' + self._street if self._street else ''})"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, config_entry.entry_id)},
-            name=device_name,
+            name=self._build_device_name(),
             model="Enea Outages Monitor",
             manufacturer="Enea Operator",
         )
 
+    def _build_device_name(self) -> str:
+        name = f"Enea Outages ({self._branch}"
+        if self._distribution_area:
+            name += f", {self._distribution_area}"
+        if self._query:
+            name += f" – {self._query}"
+        name += ")"
+        return name
+
     @property
     def _outages_data(self) -> list[Outage]:
-        """Return the relevant outages data from the coordinator."""
-        # The coordinator already fetches data for the specific outage type
-        all_outages = self.coordinator.data
-
-        if self._street:
-            return [o for o in all_outages if self._street.lower() in o.description.lower()]
+        """Return coordinator data filtered by query if provided."""
+        all_outages: list[Outage] = self.coordinator.data or []
+        if self._query:
+            return [
+                o for o in all_outages
+                if EneaOutagesClient._description_matches_query(o.description, self._query)
+            ]
         return all_outages
 
     @callback
@@ -163,26 +158,22 @@ class EneaOutagesCountSensor(EneaOutagesBaseSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return the state attributes."""
-        attrs = {}
-        outages_list = []
-
-        # Sort and limit outages to prevent database overload
-        outages = self._outages_data
-        if self._outage_type == OutageType.PLANNED:
-            outages.sort(key=lambda o: o.start_time if o.start_time else datetime.max)
-        else:  # Unplanned
-            outages.sort(key=lambda o: o.end_time if o.end_time else datetime.max)
-
-        for outage in outages[:10]:
-            outages_list.append(
+        outages = sorted(
+            self._outages_data,
+            key=lambda o: (
+                o.start_time if self._outage_type == OutageType.PLANNED else o.end_time
+            ) or datetime.max,
+        )
+        return {
+            "outages": [
                 {
-                    ATTR_DESCRIPTION: outage.description,
-                    ATTR_START_TIME: outage.start_time.isoformat() if outage.start_time else None,
-                    ATTR_END_TIME: outage.end_time.isoformat() if outage.end_time else None,
+                    ATTR_DESCRIPTION: o.description,
+                    ATTR_START_TIME: o.start_time.isoformat() if o.start_time else None,
+                    ATTR_END_TIME: o.end_time.isoformat() if o.end_time else None,
                 }
-            )
-        attrs["outages"] = outages_list
-        return attrs
+                for o in outages[:10]
+            ]
+        }
 
 
 class EneaOutagesSummarySensor(EneaOutagesBaseSensor):
@@ -190,45 +181,45 @@ class EneaOutagesSummarySensor(EneaOutagesBaseSensor):
 
     @property
     def native_value(self) -> str:
-        """Return the summary of the next outage."""
+        """Return the summary of the next/current outage."""
         outages = self._outages_data
-
         if not outages:
             return "Brak"
 
-        # Sort outages to find the most relevant one for the summary
         if self._outage_type == OutageType.PLANNED:
-            outages.sort(key=lambda o: o.start_time if o.start_time else datetime.max)
-            next_outage = outages[0]
-            start_time_str = next_outage.start_time.strftime("%Y-%m-%d %H:%M") if next_outage.start_time else "Nieznany"
-            end_time_str = next_outage.end_time.strftime("%H:%M") if next_outage.end_time else "Nieznany"
-            return f"Od: {start_time_str} do: {end_time_str} ({next_outage.description})"
-        else:  # Unplanned
-            outages.sort(key=lambda o: o.end_time if o.end_time else datetime.max)
-            current_outage = outages[0]
-            end_time_str = current_outage.end_time.strftime("%Y-%m-%d %H:%M") if current_outage.end_time else "Nieznany"
-            return f"Do: {end_time_str} ({current_outage.description})"
+            outages = sorted(
+                outages,
+                key=lambda o: o.start_time or datetime.max,
+            )
+            o = outages[0]
+            start = o.start_time.strftime("%Y-%m-%d %H:%M") if o.start_time else "Nieznany"
+            end = o.end_time.strftime("%H:%M") if o.end_time else "Nieznany"
+            return f"Od: {start} do: {end} ({o.description})"
+        else:
+            outages = sorted(
+                outages,
+                key=lambda o: o.end_time or datetime.max,
+            )
+            o = outages[0]
+            end = o.end_time.strftime("%Y-%m-%d %H:%M") if o.end_time else "Nieznany"
+            return f"Do: {end} ({o.description})"
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return the state attributes."""
-        attrs = {}
-        outages_list = []
-
-        # Sort and limit outages to prevent database overload
-        outages = self._outages_data
-        if self._outage_type == OutageType.PLANNED:
-            outages.sort(key=lambda o: o.start_time if o.start_time else datetime.max)
-        else:  # Unplanned
-            outages.sort(key=lambda o: o.end_time if o.end_time else datetime.max)
-
-        for outage in outages[:10]:
-            outages_list.append(
+        outages = sorted(
+            self._outages_data,
+            key=lambda o: (
+                o.start_time if self._outage_type == OutageType.PLANNED else o.end_time
+            ) or datetime.max,
+        )
+        return {
+            "outages": [
                 {
-                    ATTR_DESCRIPTION: outage.description,
-                    ATTR_START_TIME: outage.start_time.isoformat() if outage.start_time else None,
-                    ATTR_END_TIME: outage.end_time.isoformat() if outage.end_time else None,
+                    ATTR_DESCRIPTION: o.description,
+                    ATTR_START_TIME: o.start_time.isoformat() if o.start_time else None,
+                    ATTR_END_TIME: o.end_time.isoformat() if o.end_time else None,
                 }
-            )
-        attrs["outages"] = outages_list
-        return attrs
+                for o in outages[:10]
+            ]
+        }

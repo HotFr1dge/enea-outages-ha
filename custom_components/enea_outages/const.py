@@ -3,10 +3,11 @@
 DOMAIN = "enea_outages"
 PLATFORMS = ["sensor", "binary_sensor"]
 
-CONF_REGION = "region"
-CONF_STREET = "street"
+CONF_BRANCH = "branch"
+CONF_DISTRIBUTION_AREA = "distribution_area"
+CONF_QUERY = "query"
 
-DEFAULT_REGION = "Poznań"
+DEFAULT_BRANCH = "Poznań"
 DEFAULT_PLANNED_SCAN_INTERVAL = 3600  # 1 hour
 DEFAULT_UNPLANNED_SCAN_INTERVAL = 600  # 10 minutes
 
